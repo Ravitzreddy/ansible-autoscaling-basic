@@ -1,0 +1,16 @@
+---
+
+  - name: crerate ec2 launch configuration
+    hosts: localhost
+    connection: local
+    tasks:
+      - name: ec2_launcher
+        ec2_lc:
+          name: "{{ launch_config }}"
+          image_id: ami-5b673c34
+          instance_type: t2.micro
+          key_name: myprimeadmkeypair
+          security_group: ['default']
+          region: ap-south-1
+          user_data_path: /etc/ansible/user_data
+  

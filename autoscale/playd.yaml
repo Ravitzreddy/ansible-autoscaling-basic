@@ -1,0 +1,90 @@
+---
+
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Get my current IP address
+      uri:
+        url: http://checkip.amazonaws.com/
+        return_content: yes
+      register: my_ip
+
+    - name: Create simple security group
+      ec2_group:
+        name: webservers
+        description: A security group for my current IP
+        region: ap-south-1
+        rules:
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: "{{ my_ip.content | replace('\n', '') }}/32"
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: "{{ my_ip.content | replace('\n', '') }}/32"
+        rules_egress:
+          - proto: tcp
+            from_port: 80
+            to_port: 80
+            cidr_ip: 0.0.0.0/0
+      register: webservers_group
+
+    - name: Create the ELB only listening over port 80
+      ec2_elb_lb:
+        name: ravitz-load-balancer
+        state: present
+        region: ap-south-1
+        zones:
+          - ap-south-1a
+          - ap-south-1b
+        #subnets:
+         # - subnet-928bd7fa
+         # - subnet-d3fa779f
+        cross_az_load_balancing: true
+        listeners:
+          - protocol: http
+            load_balancer_port: 80
+            instance_port: 80
+        health_check:
+          ping_protocol: http
+          ping_port: 80
+          ping_path: "/index.html"
+          response_timeout: 5 # seconds
+          interval: 10 # seconds
+          unhealthy_threshold: 2
+          healthy_threshold: 10
+        tags:
+          name: "ravitzelb"
+      register: elb
+
+    - name: Create launch configurations
+      ec2_lc:
+        name: ravitz-launch-configuration
+        image_id: ami-5b673c34
+        instance_type: t2.micro
+        region: ap-south-1
+        security_groups: [ "{{ webservers_group.group_id }}" , "{{ elb.elb.security_group_ids | first }}" ]
+        key_name: myprimeadmkeypair
+        user_data: /etc/ansible/userdat
+      register: elc
+
+    - name: Create autoscaling group
+      ec2_asg:
+        name: ravitz-autoscaling-group
+        load_balancers: ravitz-load-balancer
+        region: ap-south-1
+        availability_zones: [ 'ap-south-1a' , 'ap-south-1b' ]
+        launch_config_name: ravitz-launch-configuration
+        min_size: 1
+        max_size: 2
+        desired_capacity: 2
+        replace_all_instances: yes
+        suspend_processes: []
+        vpc_zone_identifier: [ 'subnet-928bd7fa' , 'subnet-d3fa779f']
+        tags:
+          - name: ravitzasg
+        wait_for_instances: true
+        
+                 
